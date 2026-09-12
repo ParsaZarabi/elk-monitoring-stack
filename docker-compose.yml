@@ -1,0 +1,139 @@
+services:
+  redisserver:
+    image: redis:latest
+    ports:
+      - 6379:6379
+    networks:
+      cache:
+        aliases:
+          - "redis"
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    ports:
+      - 5540:5540
+    networks:
+      cache:
+        aliases:
+          - "redisinsight"
+  elasticsearch:
+    image: elasticsearch:9.5.3
+    container_name: elasticsearch
+    environment:
+      - node.name=elasticsearch
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata1:/usr/share/elasticsearch/data
+    ports:
+      - 9300:9300
+      - 9200:9200
+    healthcheck:
+      test: "curl -s http://localhost:9200 | grep docker || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      logging:
+        aliases:
+          - "elasticsearch"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.5.3
+    container_name: kibana
+    environment:
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
+    ports:
+      - 5601:5601
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      logging:
+        aliases:
+          - "kibana"
+
+  logstash:
+    image: logstash:9.5.3
+    container_name: logstash
+    command: logstash -f /etc/logstash/conf.d/logstash.conf
+    volumes:
+      - ./logstash:/etc/logstash/conf.d:ro
+    ports:
+      - "5010:5000"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      logging:
+        aliases:
+          - "logstash"
+
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+        # condition: service_started
+        # - elasticsearch
+    environment:
+      - STORAGE_TYPE=elasticsearch
+      - "ES_HOSTS=elasticsearch:9200"
+    ports:
+      - "9411:9411"
+    networks:
+      tracing:
+        aliases:
+          - "zipkin"
+      logging:
+        aliases:
+          - "zipkin"
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+    container_name: prometheus
+    networks:
+      monitoring:
+        aliases:
+          - "prometheus"
+  grafana:
+    image: "grafana/grafana:latest"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    container_name: grafana
+    networks:
+      monitoring:
+        aliases:
+          - "grafana"
+
+volumes:
+  esdata1:
+    driver: local
+  grafana-storage:
+    driver: local
+
+networks:
+  logging:
+    driver: bridge
+  cache:
+    driver: bridge
+  monitoring:
+    driver: bridge
+  tracing:
+    driver: bridge
